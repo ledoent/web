@@ -31,13 +31,10 @@ icon next to the field; the `_provenance_for(fname)` method returns the
 tooltip dict.
 """
 
-import logging
 import time
 from datetime import datetime, timezone
 
 from odoo import api, fields, models, tools
-
-_logger = logging.getLogger(__name__)
 
 # Source short-codes, kept terse so the JSON column stays compact when
 # many fields opt in. Matches the convention in mail.tracking.value and
@@ -201,12 +198,47 @@ class Base(models.AbstractModel):
     def write(self, vals):
         if self.env.context.get("_prov_skip"):
             return super().write(vals)
+        # If the client supplied a `_provenance` payload (e.g. the OWL
+        # badge's optimistic click-to-anchor update), sanitize it before
+        # it hits the column. Untrusted callers must not be able to
+        # forge `b` (writer identity) or `t` (timestamp), and must not
+        # be able to claim rule provenance — only server-side cascade
+        # code can do that via `_stamp_provenance`.
+        if "_provenance" in vals and vals["_provenance"] is not None:
+            vals = dict(vals)
+            vals["_provenance"] = self._sanitize_client_provenance(vals["_provenance"])
         tracked = self._field_track_set()
         user_keys = [k for k in vals if k in tracked]
         res = super().write(vals)
         if user_keys:
             self._stamp_provenance_keys(user_keys, source=_USER)
         return res
+
+    def _sanitize_client_provenance(self, payload):
+        """Rewrite a client-supplied `_provenance` map so every entry is
+        attributed to the currently-authenticated user with the current
+        timestamp. Drops any `s='r'` (rule) entry — only server-side
+        cascade callers may stamp rule provenance via `_stamp_provenance`.
+
+        We keep the payload's *keys* (the field names the client wants
+        anchored) but always replace the *values* with trusted ones.
+        """
+        if not isinstance(payload, dict):
+            # Reject non-dict payloads outright rather than persist
+            # something the badge can't interpret.
+            return {}
+        login = self.env.user.login
+        now = int(time.time())
+        sanitized = {}
+        for fname, raw in payload.items():
+            # Reject obvious junk: non-string keys, unknown sources, etc.
+            if not isinstance(fname, str):
+                continue
+            if isinstance(raw, dict) and raw.get("s") == _RULE:
+                # Client cannot claim rule provenance. Skip.
+                continue
+            sanitized[fname] = {"s": _USER, "b": login, "t": now}
+        return sanitized
 
     # ------------------------------------------------------------------
     # Web client integration — surface _provenance alongside tracked

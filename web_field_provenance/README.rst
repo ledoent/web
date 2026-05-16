@@ -28,26 +28,48 @@ Web Field Provenance
 
 |badge1| |badge2| |badge3| |badge4| |badge5|
 
-Track and surface whether a field value was set by the user or assigned
-by a computed/derived default — Salesforce/SAP-style field provenance
-for Odoo.
+Track and surface whether a field value was set by the user, assigned by
+a rule/cascade/integration, or is still at its default — Salesforce/
+SAP-style field provenance for Odoo.
 
 Solves the OCA-wide bug class where
 ``compute=..., store=True, readonly=False`` ("computed-writable") fields
 silently overwrite manual user overrides when an upstream dependency
 changes and the compute re-fires through ``super()``. Provides:
 
-1. A persistent per-record provenance map (``_provenance``) that records
-   which fields were last set by a user vs. assigned by a compute.
-2. A reusable ``_user_set(fname)`` helper for compute methods to gate
-   ``super()`` on real user intent rather than chain-residual values.
-3. An OWL ``provenance_m2o`` widget that renders a small badge next to
-   opted-in fields: green gear icon = derived default, pencil = user
-   override. Clicking the badge anchors the value as user-supplied.
+1. A persistent per-record provenance map (``_provenance``) that
+   records, for every opted-in field, **how** it got its current value.
+   Three states:
+
+   - **default** — no entry. The field is still at the value it had on
+     creation. We never stamp the default state, which keeps the JSON
+     column compact.
+   - **rule / cascade / EDI** —
+     ``{s:"r", b:<writer-id>, t:<unix>, r:<label>}``. Set by server-side
+     cascade code via ``_stamp_provenance(source="r", …)``.
+   - **user** — ``{s:"u", b:<login>, t:<unix>}``. Set by a regular user
+     write. Stamped automatically by the ORM hook.
+
+2. A reusable ``_user_set(fname)`` helper that compute methods consult
+   to gate ``super()`` on real user intent rather than chain-residual
+   values.
+3. A ``_stamp_provenance(keys, source, by, rule=None, when=None)``
+   public API for cascade methods, EDI connectors, and import loaders to
+   attribute their writes correctly.
+4. A ``_provenance_for(fname)`` helper returning the badge tooltip dict
+   (also useful as a golden-output target in tests).
+5. An OWL ``provenance_m2o`` widget that renders a small badge next to
+   opted-in fields with three icons:
+
+   - grey outline = default
+   - green cog = rule
+   - pencil = user Hovering shows the writer and timestamp. Clicking
+     promotes the value to user-anchored; the server sanitizes the
+     client payload so writer identity cannot be spoofed.
 
 This module is plumbing. To surface the badge on a specific field, set
-``track_provenance=True`` on its ``ir.model.fields`` record and replace
-the view tag with ``widget="provenance_m2o"``.
+``track_provenance=True`` on its ``ir.model.fields`` record (see USAGE)
+and replace the view tag with ``widget="provenance_m2o"``.
 
 **Table of contents**
 
@@ -61,12 +83,21 @@ Usage
 -----------------------------------------
 
 In Settings → Technical → Database Structure → Fields, find the field
-you want tracked and tick **Track Provenance**. Or programmatically:
+and tick **Track Provenance**. (For fields declared in Python — most
+fields you'll want to track — the UI write is blocked by Odoo's
+base-field protection; the documented workaround is a small admin
+wizard, see ROADMAP.)
+
+Programmatically (e.g. in a ``post_init_hook`` of a downstream module):
 
 .. code:: python
 
-   self.env["ir.model.fields"]._get("account.move", "invoice_payment_term_id")\
-       .write({"track_provenance": True})
+   self.env.cr.execute(
+       "UPDATE ir_model_fields SET track_provenance = TRUE "
+       "WHERE model = %s AND name = %s",
+       ("sale.order", "payment_term_id"),
+   )
+   self.env.registry.clear_cache()
 
 2. Preserve user values inside an override compute
 --------------------------------------------------
@@ -76,33 +107,68 @@ In modules that layer overrides on Odoo core computes (e.g.
 
 .. code:: python
 
-   @api.depends("sale_type_id")
-   def _compute_invoice_payment_term_id(self):
+   @api.depends("type_id")
+   def _compute_payment_term_id(self):
        # Records the user has explicitly touched are excluded from super().
-       preserved = self.filtered(
-           lambda m: m._user_set("invoice_payment_term_id"),
-       )
-       super(AccountMove, self - preserved)._compute_invoice_payment_term_id()
-       for move in (self - preserved).filtered("sale_type_id.payment_term_id"):
-           move.invoice_payment_term_id = move.sale_type_id.payment_term_id
+       preserved = self.filtered(lambda r: r._user_set("payment_term_id"))
+       super(SaleOrder, self - preserved)._compute_payment_term_id()
+       for order in (self - preserved).filtered("type_id.payment_term_id"):
+           order.payment_term_id = order.type_id.payment_term_id
 
-3. Render the badge in views
+3. Attribute cascade / rule / EDI writes correctly
+--------------------------------------------------
+
+When a non-user writer (a compute cascade, an EDI inbound, an import
+loader) sets a value, call ``_stamp_provenance`` so the badge attributes
+the value to the correct source instead of the env user:
+
+.. code:: python
+
+   order._stamp_provenance(
+       ["payment_term_id"],
+       source="r",
+       by="sot.cascade",                 # stable writer identifier
+       rule="Sale Order Type cascade",   # optional human-readable label
+   )
+
+The badge will then render the green-cog (rule) icon and the hover
+tooltip will read "Set by *Sale Order Type cascade*".
+
+4. Render the badge in views
 ----------------------------
 
 Replace the field's view tag:
 
 .. code:: xml
 
-   <field name="invoice_payment_term_id" widget="provenance_m2o"/>
+   <field name="payment_term_id" widget="provenance_m2o"/>
 
-A small icon appears next to the field:
+A small icon appears next to the field with three states:
 
-- **Green gear** — the value came from a default or compute. It may
-  change if upstream fields change.
-- **Pencil** — the user has anchored this value. Recompute cascades will
-  respect it.
+- **Grey outline** — *default*: field is still at its initial value. No
+  entry exists in the provenance map; the badge falls back to
+  ``record.create_date`` for the tooltip.
+- **Green cog** — *rule / cascade / EDI*: the value was set by
+  server-side logic (``_stamp_provenance`` called with ``source="r"``).
+  Tooltip names the writer.
+- **Pencil** — *user*: the user has anchored this value. Recompute
+  cascades that consult ``_user_set`` will respect it.
 
-Clicking the icon promotes the current value to user-anchored.
+Clicking the icon promotes the current value to user-anchored. The
+server sanitizes the click (forces ``b = env.user.login``, drops any
+client-supplied rule provenance) — there is no path for a malicious
+client to spoof the writer identity.
+
+5. Inspect provenance programmatically
+--------------------------------------
+
+.. code:: python
+
+   order._user_set("payment_term_id")        # True/False
+   order._provenance_for("payment_term_id")  # {state, label, by?, rule?, when}
+
+The dict form is what the OWL widget renders; it's also useful for
+golden-output tests of cascade flows.
 
 Known issues / Roadmap
 ======================

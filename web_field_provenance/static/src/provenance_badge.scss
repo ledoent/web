@@ -15,11 +15,16 @@
             font-size: 0.85rem;
         }
 
+        // 3-state colors keyed off the `o_provenance_<state>` class
+        // emitted by the OWL template.
+        &.o_provenance_default i {
+            color: var(--bs-secondary, #6c757d);
+        }
+        &.o_provenance_rule i {
+            color: var(--bs-success, #28a745);
+        }
         &.o_provenance_user i {
             color: var(--bs-primary, #714b67);
-        }
-        &.o_provenance_system i {
-            color: var(--bs-success, #28a745);
         }
     }
 }

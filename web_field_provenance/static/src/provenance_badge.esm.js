@@ -22,7 +22,6 @@
  * MVP scope: many2one only. Selection / char follow the same shape.
  */
 import {registry} from "@web/core/registry";
-import {useState} from "@odoo/owl";
 import {_t} from "@web/core/l10n/translation";
 import {Many2OneField, many2OneField} from "@web/views/fields/many2one/many2one_field";
 
@@ -32,11 +31,6 @@ const SOURCE_RULE = "r";
 export class ProvenanceMany2OneField extends Many2OneField {
     static template = "web_field_provenance.ProvenanceMany2One";
     static components = {...Many2OneField.components};
-
-    setup() {
-        super.setup();
-        this.badge = useState({visible: true});
-    }
 
     get entry() {
         const map = this.props.record.data._provenance || {};

@@ -370,40 +370,65 @@ ul.auto-toc {
 !! source digest: sha256:c0e6a57f9f1fb3302bcfc4940b464ae29fdfd5116dc0cefc8e257efcb4370316
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! -->
 <p><a class="reference external image-reference" href="https://odoo-community.org/page/development-status"><img alt="Beta" src="https://img.shields.io/badge/maturity-Beta-yellow.png" /></a> <a class="reference external image-reference" href="http://www.gnu.org/licenses/agpl-3.0-standalone.html"><img alt="License: AGPL-3" src="https://img.shields.io/badge/licence-AGPL--3-blue.png" /></a> <a class="reference external image-reference" href="https://github.com/OCA/web/tree/18.0/web_field_provenance"><img alt="OCA/web" src="https://img.shields.io/badge/github-OCA%2Fweb-lightgray.png?logo=github" /></a> <a class="reference external image-reference" href="https://translation.odoo-community.org/projects/web-18-0/web-18-0-web_field_provenance"><img alt="Translate me on Weblate" src="https://img.shields.io/badge/weblate-Translate%20me-F47D42.png" /></a> <a class="reference external image-reference" href="https://runboat.odoo-community.org/builds?repo=OCA/web&amp;target_branch=18.0"><img alt="Try me on Runboat" src="https://img.shields.io/badge/runboat-Try%20me-875A7B.png" /></a></p>
-<p>Track and surface whether a field value was set by the user or assigned
-by a computed/derived default — Salesforce/SAP-style field provenance
-for Odoo.</p>
+<p>Track and surface whether a field value was set by the user, assigned by
+a rule/cascade/integration, or is still at its default — Salesforce/
+SAP-style field provenance for Odoo.</p>
 <p>Solves the OCA-wide bug class where
 <tt class="docutils literal"><span class="pre">compute=...,</span> store=True, readonly=False</tt> (“computed-writable”) fields
 silently overwrite manual user overrides when an upstream dependency
 changes and the compute re-fires through <tt class="docutils literal">super()</tt>. Provides:</p>
 <ol class="arabic simple">
-<li>A persistent per-record provenance map (<tt class="docutils literal">_provenance</tt>) that records
-which fields were last set by a user vs. assigned by a compute.</li>
-<li>A reusable <tt class="docutils literal">_user_set(fname)</tt> helper for compute methods to gate
-<tt class="docutils literal">super()</tt> on real user intent rather than chain-residual values.</li>
+<li>A persistent per-record provenance map (<tt class="docutils literal">_provenance</tt>) that
+records, for every opted-in field, <strong>how</strong> it got its current value.
+Three states:<ul>
+<li><strong>default</strong> — no entry. The field is still at the value it had on
+creation. We never stamp the default state, which keeps the JSON
+column compact.</li>
+<li><strong>rule / cascade / EDI</strong> —
+<tt class="docutils literal"><span class="pre">{s:&quot;r&quot;,</span> <span class="pre">b:&lt;writer-id&gt;,</span> <span class="pre">t:&lt;unix&gt;,</span> <span class="pre">r:&lt;label&gt;}</span></tt>. Set by server-side
+cascade code via <tt class="docutils literal"><span class="pre">_stamp_provenance(source=&quot;r&quot;,</span> …)</tt>.</li>
+<li><strong>user</strong> — <tt class="docutils literal"><span class="pre">{s:&quot;u&quot;,</span> <span class="pre">b:&lt;login&gt;,</span> <span class="pre">t:&lt;unix&gt;}</span></tt>. Set by a regular user
+write. Stamped automatically by the ORM hook.</li>
+</ul>
+</li>
+<li>A reusable <tt class="docutils literal">_user_set(fname)</tt> helper that compute methods consult
+to gate <tt class="docutils literal">super()</tt> on real user intent rather than chain-residual
+values.</li>
+<li>A <tt class="docutils literal">_stamp_provenance(keys, source, by, rule=None, when=None)</tt>
+public API for cascade methods, EDI connectors, and import loaders to
+attribute their writes correctly.</li>
+<li>A <tt class="docutils literal">_provenance_for(fname)</tt> helper returning the badge tooltip dict
+(also useful as a golden-output target in tests).</li>
 <li>An OWL <tt class="docutils literal">provenance_m2o</tt> widget that renders a small badge next to
-opted-in fields: green gear icon = derived default, pencil = user
-override. Clicking the badge anchors the value as user-supplied.</li>
+opted-in fields with three icons:<ul>
+<li>grey outline = default</li>
+<li>green cog = rule</li>
+<li>pencil = user Hovering shows the writer and timestamp. Clicking
+promotes the value to user-anchored; the server sanitizes the
+client payload so writer identity cannot be spoofed.</li>
+</ul>
+</li>
 </ol>
 <p>This module is plumbing. To surface the badge on a specific field, set
-<tt class="docutils literal">track_provenance=True</tt> on its <tt class="docutils literal">ir.model.fields</tt> record and replace
-the view tag with <tt class="docutils literal"><span class="pre">widget=&quot;provenance_m2o&quot;</span></tt>.</p>
+<tt class="docutils literal">track_provenance=True</tt> on its <tt class="docutils literal">ir.model.fields</tt> record (see USAGE)
+and replace the view tag with <tt class="docutils literal"><span class="pre">widget=&quot;provenance_m2o&quot;</span></tt>.</p>
 <p><strong>Table of contents</strong></p>
 <div class="contents local topic" id="contents">
 <ul class="simple">
 <li><a class="reference internal" href="#usage" id="toc-entry-1">Usage</a><ul>
 <li><a class="reference internal" href="#opt-in-a-field-for-provenance-tracking" id="toc-entry-2">1. Opt-in a field for provenance tracking</a></li>
 <li><a class="reference internal" href="#preserve-user-values-inside-an-override-compute" id="toc-entry-3">2. Preserve user values inside an override compute</a></li>
-<li><a class="reference internal" href="#render-the-badge-in-views" id="toc-entry-4">3. Render the badge in views</a></li>
+<li><a class="reference internal" href="#attribute-cascade-rule-edi-writes-correctly" id="toc-entry-4">3. Attribute cascade / rule / EDI writes correctly</a></li>
+<li><a class="reference internal" href="#render-the-badge-in-views" id="toc-entry-5">4. Render the badge in views</a></li>
+<li><a class="reference internal" href="#inspect-provenance-programmatically" id="toc-entry-6">5. Inspect provenance programmatically</a></li>
 </ul>
 </li>
-<li><a class="reference internal" href="#known-issues-roadmap" id="toc-entry-5">Known issues / Roadmap</a></li>
-<li><a class="reference internal" href="#bug-tracker" id="toc-entry-6">Bug Tracker</a></li>
-<li><a class="reference internal" href="#credits" id="toc-entry-7">Credits</a><ul>
-<li><a class="reference internal" href="#authors" id="toc-entry-8">Authors</a></li>
-<li><a class="reference internal" href="#contributors" id="toc-entry-9">Contributors</a></li>
-<li><a class="reference internal" href="#maintainers" id="toc-entry-10">Maintainers</a></li>
+<li><a class="reference internal" href="#known-issues-roadmap" id="toc-entry-7">Known issues / Roadmap</a></li>
+<li><a class="reference internal" href="#bug-tracker" id="toc-entry-8">Bug Tracker</a></li>
+<li><a class="reference internal" href="#credits" id="toc-entry-9">Credits</a><ul>
+<li><a class="reference internal" href="#authors" id="toc-entry-10">Authors</a></li>
+<li><a class="reference internal" href="#contributors" id="toc-entry-11">Contributors</a></li>
+<li><a class="reference internal" href="#maintainers" id="toc-entry-12">Maintainers</a></li>
 </ul>
 </li>
 </ul>
@@ -413,10 +438,18 @@ the view tag with <tt class="docutils literal"><span class="pre">widget=&quot;pr
 <div class="section" id="opt-in-a-field-for-provenance-tracking">
 <h2><a class="toc-backref" href="#toc-entry-2">1. Opt-in a field for provenance tracking</a></h2>
 <p>In Settings → Technical → Database Structure → Fields, find the field
-you want tracked and tick <strong>Track Provenance</strong>. Or programmatically:</p>
+and tick <strong>Track Provenance</strong>. (For fields declared in Python — most
+fields you’ll want to track — the UI write is blocked by Odoo’s
+base-field protection; the documented workaround is a small admin
+wizard, see ROADMAP.)</p>
+<p>Programmatically (e.g. in a <tt class="docutils literal">post_init_hook</tt> of a downstream module):</p>
 <pre class="code python literal-block">
-<span class="bp">self</span><span class="o">.</span><span class="n">env</span><span class="p">[</span><span class="s2">&quot;ir.model.fields&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">_get</span><span class="p">(</span><span class="s2">&quot;account.move&quot;</span><span class="p">,</span> <span class="s2">&quot;invoice_payment_term_id&quot;</span><span class="p">)</span>\
-    <span class="o">.</span><span class="n">write</span><span class="p">({</span><span class="s2">&quot;track_provenance&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">})</span>
+<span class="bp">self</span><span class="o">.</span><span class="n">env</span><span class="o">.</span><span class="n">cr</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="w">
+</span>    <span class="s2">&quot;UPDATE ir_model_fields SET track_provenance = TRUE &quot;</span><span class="w">
+</span>    <span class="s2">&quot;WHERE model = </span><span class="si">%s</span><span class="s2"> AND name = </span><span class="si">%s</span><span class="s2">&quot;</span><span class="p">,</span><span class="w">
+</span>    <span class="p">(</span><span class="s2">&quot;sale.order&quot;</span><span class="p">,</span> <span class="s2">&quot;payment_term_id&quot;</span><span class="p">),</span><span class="w">
+</span><span class="p">)</span><span class="w">
+</span><span class="bp">self</span><span class="o">.</span><span class="n">env</span><span class="o">.</span><span class="n">registry</span><span class="o">.</span><span class="n">clear_cache</span><span class="p">()</span>
 </pre>
 </div>
 <div class="section" id="preserve-user-values-inside-an-override-compute">
@@ -424,35 +457,65 @@ you want tracked and tick <strong>Track Provenance</strong>. Or programmatically
 <p>In modules that layer overrides on Odoo core computes (e.g.
 <tt class="docutils literal">sale_order_type</tt>), guard the recompute on the new helper:</p>
 <pre class="code python literal-block">
-<span class="nd">&#64;api</span><span class="o">.</span><span class="n">depends</span><span class="p">(</span><span class="s2">&quot;sale_type_id&quot;</span><span class="p">)</span><span class="w">
-</span><span class="k">def</span><span class="w"> </span><span class="nf">_compute_invoice_payment_term_id</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span><span class="w">
+<span class="nd">&#64;api</span><span class="o">.</span><span class="n">depends</span><span class="p">(</span><span class="s2">&quot;type_id&quot;</span><span class="p">)</span><span class="w">
+</span><span class="k">def</span><span class="w"> </span><span class="nf">_compute_payment_term_id</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span><span class="w">
 </span>    <span class="c1"># Records the user has explicitly touched are excluded from super().</span><span class="w">
-</span>    <span class="n">preserved</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">filtered</span><span class="p">(</span><span class="w">
-</span>        <span class="k">lambda</span> <span class="n">m</span><span class="p">:</span> <span class="n">m</span><span class="o">.</span><span class="n">_user_set</span><span class="p">(</span><span class="s2">&quot;invoice_payment_term_id&quot;</span><span class="p">),</span><span class="w">
-</span>    <span class="p">)</span><span class="w">
-</span>    <span class="nb">super</span><span class="p">(</span><span class="n">AccountMove</span><span class="p">,</span> <span class="bp">self</span> <span class="o">-</span> <span class="n">preserved</span><span class="p">)</span><span class="o">.</span><span class="n">_compute_invoice_payment_term_id</span><span class="p">()</span><span class="w">
-</span>    <span class="k">for</span> <span class="n">move</span> <span class="ow">in</span> <span class="p">(</span><span class="bp">self</span> <span class="o">-</span> <span class="n">preserved</span><span class="p">)</span><span class="o">.</span><span class="n">filtered</span><span class="p">(</span><span class="s2">&quot;sale_type_id.payment_term_id&quot;</span><span class="p">):</span><span class="w">
-</span>        <span class="n">move</span><span class="o">.</span><span class="n">invoice_payment_term_id</span> <span class="o">=</span> <span class="n">move</span><span class="o">.</span><span class="n">sale_type_id</span><span class="o">.</span><span class="n">payment_term_id</span>
+</span>    <span class="n">preserved</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">filtered</span><span class="p">(</span><span class="k">lambda</span> <span class="n">r</span><span class="p">:</span> <span class="n">r</span><span class="o">.</span><span class="n">_user_set</span><span class="p">(</span><span class="s2">&quot;payment_term_id&quot;</span><span class="p">))</span><span class="w">
+</span>    <span class="nb">super</span><span class="p">(</span><span class="n">SaleOrder</span><span class="p">,</span> <span class="bp">self</span> <span class="o">-</span> <span class="n">preserved</span><span class="p">)</span><span class="o">.</span><span class="n">_compute_payment_term_id</span><span class="p">()</span><span class="w">
+</span>    <span class="k">for</span> <span class="n">order</span> <span class="ow">in</span> <span class="p">(</span><span class="bp">self</span> <span class="o">-</span> <span class="n">preserved</span><span class="p">)</span><span class="o">.</span><span class="n">filtered</span><span class="p">(</span><span class="s2">&quot;type_id.payment_term_id&quot;</span><span class="p">):</span><span class="w">
+</span>        <span class="n">order</span><span class="o">.</span><span class="n">payment_term_id</span> <span class="o">=</span> <span class="n">order</span><span class="o">.</span><span class="n">type_id</span><span class="o">.</span><span class="n">payment_term_id</span>
 </pre>
 </div>
+<div class="section" id="attribute-cascade-rule-edi-writes-correctly">
+<h2><a class="toc-backref" href="#toc-entry-4">3. Attribute cascade / rule / EDI writes correctly</a></h2>
+<p>When a non-user writer (a compute cascade, an EDI inbound, an import
+loader) sets a value, call <tt class="docutils literal">_stamp_provenance</tt> so the badge attributes
+the value to the correct source instead of the env user:</p>
+<pre class="code python literal-block">
+<span class="n">order</span><span class="o">.</span><span class="n">_stamp_provenance</span><span class="p">(</span><span class="w">
+</span>    <span class="p">[</span><span class="s2">&quot;payment_term_id&quot;</span><span class="p">],</span><span class="w">
+</span>    <span class="n">source</span><span class="o">=</span><span class="s2">&quot;r&quot;</span><span class="p">,</span><span class="w">
+</span>    <span class="n">by</span><span class="o">=</span><span class="s2">&quot;sot.cascade&quot;</span><span class="p">,</span>                 <span class="c1"># stable writer identifier</span><span class="w">
+</span>    <span class="n">rule</span><span class="o">=</span><span class="s2">&quot;Sale Order Type cascade&quot;</span><span class="p">,</span>   <span class="c1"># optional human-readable label</span><span class="w">
+</span><span class="p">)</span>
+</pre>
+<p>The badge will then render the green-cog (rule) icon and the hover
+tooltip will read “Set by <em>Sale Order Type cascade</em>”.</p>
+</div>
 <div class="section" id="render-the-badge-in-views">
-<h2><a class="toc-backref" href="#toc-entry-4">3. Render the badge in views</a></h2>
+<h2><a class="toc-backref" href="#toc-entry-5">4. Render the badge in views</a></h2>
 <p>Replace the field’s view tag:</p>
 <pre class="code xml literal-block">
-<span class="nt">&lt;field</span><span class="w"> </span><span class="na">name=</span><span class="s">&quot;invoice_payment_term_id&quot;</span><span class="w"> </span><span class="na">widget=</span><span class="s">&quot;provenance_m2o&quot;</span><span class="nt">/&gt;</span>
+<span class="nt">&lt;field</span><span class="w"> </span><span class="na">name=</span><span class="s">&quot;payment_term_id&quot;</span><span class="w"> </span><span class="na">widget=</span><span class="s">&quot;provenance_m2o&quot;</span><span class="nt">/&gt;</span>
 </pre>
-<p>A small icon appears next to the field:</p>
+<p>A small icon appears next to the field with three states:</p>
 <ul class="simple">
-<li><strong>Green gear</strong> — the value came from a default or compute. It may
-change if upstream fields change.</li>
-<li><strong>Pencil</strong> — the user has anchored this value. Recompute cascades will
-respect it.</li>
+<li><strong>Grey outline</strong> — <em>default</em>: field is still at its initial value. No
+entry exists in the provenance map; the badge falls back to
+<tt class="docutils literal">record.create_date</tt> for the tooltip.</li>
+<li><strong>Green cog</strong> — <em>rule / cascade / EDI</em>: the value was set by
+server-side logic (<tt class="docutils literal">_stamp_provenance</tt> called with <tt class="docutils literal"><span class="pre">source=&quot;r&quot;</span></tt>).
+Tooltip names the writer.</li>
+<li><strong>Pencil</strong> — <em>user</em>: the user has anchored this value. Recompute
+cascades that consult <tt class="docutils literal">_user_set</tt> will respect it.</li>
 </ul>
-<p>Clicking the icon promotes the current value to user-anchored.</p>
+<p>Clicking the icon promotes the current value to user-anchored. The
+server sanitizes the click (forces <tt class="docutils literal">b = env.user.login</tt>, drops any
+client-supplied rule provenance) — there is no path for a malicious
+client to spoof the writer identity.</p>
+</div>
+<div class="section" id="inspect-provenance-programmatically">
+<h2><a class="toc-backref" href="#toc-entry-6">5. Inspect provenance programmatically</a></h2>
+<pre class="code python literal-block">
+<span class="n">order</span><span class="o">.</span><span class="n">_user_set</span><span class="p">(</span><span class="s2">&quot;payment_term_id&quot;</span><span class="p">)</span>        <span class="c1"># True/False</span><span class="w">
+</span><span class="n">order</span><span class="o">.</span><span class="n">_provenance_for</span><span class="p">(</span><span class="s2">&quot;payment_term_id&quot;</span><span class="p">)</span>  <span class="c1"># {state, label, by?, rule?, when}</span>
+</pre>
+<p>The dict form is what the OWL widget renders; it’s also useful for
+golden-output tests of cascade flows.</p>
 </div>
 </div>
 <div class="section" id="known-issues-roadmap">
-<h1><a class="toc-backref" href="#toc-entry-5">Known issues / Roadmap</a></h1>
+<h1><a class="toc-backref" href="#toc-entry-7">Known issues / Roadmap</a></h1>
 <ul class="simple">
 <li>☐ <strong>Opt-in wizard for base fields.</strong> Odoo blocks
 <tt class="docutils literal">ir.model.fields.write()</tt> on <tt class="docutils literal"><span class="pre">state='base'</span></tt> fields, so
@@ -499,7 +562,7 @@ if the inline column starts dominating query costs.</li>
 </ul>
 </div>
 <div class="section" id="bug-tracker">
-<h1><a class="toc-backref" href="#toc-entry-6">Bug Tracker</a></h1>
+<h1><a class="toc-backref" href="#toc-entry-8">Bug Tracker</a></h1>
 <p>Bugs are tracked on <a class="reference external" href="https://github.com/OCA/web/issues">GitHub Issues</a>.
 In case of trouble, please check there if your issue has already been reported.
 If you spotted it first, help us to smash it by providing a detailed and welcomed
@@ -507,21 +570,21 @@ If you spotted it first, help us to smash it by providing a detailed and welcome
 <p>Do not contact contributors directly about support or help with technical issues.</p>
 </div>
 <div class="section" id="credits">
-<h1><a class="toc-backref" href="#toc-entry-7">Credits</a></h1>
+<h1><a class="toc-backref" href="#toc-entry-9">Credits</a></h1>
 <div class="section" id="authors">
-<h2><a class="toc-backref" href="#toc-entry-8">Authors</a></h2>
+<h2><a class="toc-backref" href="#toc-entry-10">Authors</a></h2>
 <ul class="simple">
 <li>Ledoweb</li>
 </ul>
 </div>
 <div class="section" id="contributors">
-<h2><a class="toc-backref" href="#toc-entry-9">Contributors</a></h2>
+<h2><a class="toc-backref" href="#toc-entry-11">Contributors</a></h2>
 <ul class="simple">
 <li>Dan Kendall <a class="reference external" href="mailto:dkendall&#64;ledoweb.com">dkendall&#64;ledoweb.com</a></li>
 </ul>
 </div>
 <div class="section" id="maintainers">
-<h2><a class="toc-backref" href="#toc-entry-10">Maintainers</a></h2>
+<h2><a class="toc-backref" href="#toc-entry-12">Maintainers</a></h2>
 <p>This module is maintained by the OCA.</p>
 <a class="reference external image-reference" href="https://odoo-community.org">
 <img alt="Odoo Community Association" src="https://odoo-community.org/logo.png" />

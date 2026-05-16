@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo>
+    <record id="view_model_fields_form_inherit_provenance" model="ir.ui.view">
+        <field name="name">ir.model.fields.form.inherit.web_field_provenance</field>
+        <field name="model">ir.model.fields</field>
+        <field name="inherit_id" ref="base.view_model_fields_form" />
+        <field name="arch" type="xml">
+            <field name="readonly" position="after">
+                <field name="track_provenance" />
+            </field>
+        </field>
+    </record>
+</odoo>

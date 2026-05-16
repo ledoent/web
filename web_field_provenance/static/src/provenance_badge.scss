@@ -1,0 +1,25 @@
+.o_provenance_field_wrapper {
+    .o_provenance_badge {
+        background: transparent;
+        border: 0;
+        line-height: 1;
+        cursor: pointer;
+        opacity: 0.55;
+        transition: opacity 0.15s ease;
+
+        &:hover {
+            opacity: 1;
+        }
+
+        i {
+            font-size: 0.85rem;
+        }
+
+        &.o_provenance_user i {
+            color: var(--bs-primary, #714b67);
+        }
+        &.o_provenance_system i {
+            color: var(--bs-success, #28a745);
+        }
+    }
+}

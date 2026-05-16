@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<templates xml:space="preserve">
+
+  <t t-name="web_field_provenance.ProvenanceMany2One" owl="1">
+        <div class="o_provenance_field_wrapper d-flex align-items-center">
+            <t t-call="web.Many2OneField" />
+            <button
+                t-if="badge.visible"
+                class="o_provenance_badge btn btn-sm p-0 ms-1"
+                t-att-class="provenance === 'u' ? 'o_provenance_user' : 'o_provenance_system'"
+                t-att-title="badgeTitle"
+                t-on-click="onBadgeClick"
+                type="button"
+            >
+                <i
+                    t-att-class="provenance === 'u' ? 'fa fa-pencil' : 'fa fa-cog text-success'"
+                />
+            </button>
+        </div>
+    </t>
+
+</templates>

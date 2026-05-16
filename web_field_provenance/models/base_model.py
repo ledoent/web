@@ -2,30 +2,49 @@
 # License AGPL-3.0 or later (http://www.gnu.org/licenses/agpl.html)
 """Provenance machinery for computed-writable fields.
 
-Two ideas implemented here:
+Two cooperating ideas:
 
-1.  Per-field "did the user set this?" probe — `_user_set(fname)` — based on
-    `record._origin`. Cheap, no schema cost, available to every model.
+1.  Per-field "did the user set this?" probe — `_user_set(fname)` — combining
+    the persisted provenance map with an `_origin` transactional fallback.
+    Available on every model.
 
-2.  Per-field provenance map — a JSON column `_provenance` that records
-    which fields were last written by a user vs. assigned by a compute.
-    Only populated for fields whose `ir.model.fields.track_provenance`
-    flag is set. The web client reads this map and renders a small badge
-    next to opted-in fields (system gear vs. user pencil), Salesforce/SAP
-    style.
+2.  Per-field provenance map — a JSON column `_provenance` recording, for
+    every opted-in field, *how* it got its current value:
 
-The two paths cooperate: in compute methods, callers can guard with
-`if record._user_set('payment_term_id'): continue` to preserve manual
-values during recompute cascades. The provenance map then lights up the
-badge so the user sees the system gave way to their choice.
+      - **No entry**       → field still at its default. Implicit. We never
+                             stamp the default state to keep the JSON small;
+                             the badge falls back to `record.create_date`.
+      - `{"s": "u", ...}`  → set by a user (login captured in `b`).
+      - `{"s": "r", ...}`  → set by a rule / cascade / integration
+                             (writer identifier in `b`, human-readable label
+                             in `r`).
+
+    Each entry also carries a unix timestamp `t`, surfaced to the OWL badge
+    so the hover tooltip can say "Set by *dkendall* 12 minutes ago" or
+    "Set by *Sale Order Type cascade* at 14:02".
+
+Only fields opted-in via `ir.model.fields.track_provenance=True` are
+stamped — keeps cost at zero for the typical record.
+
+The OWL widget consumes `_provenance` from `web_read` and renders a small
+icon next to the field; the `_provenance_for(fname)` method returns the
+tooltip dict.
 """
+
+import logging
+import time
+from datetime import datetime, timezone
 
 from odoo import api, fields, models, tools
 
-# Marker key for provenance values. Kept short to keep the JSON column
-# compact when many fields opt in.
+_logger = logging.getLogger(__name__)
+
+# Source short-codes, kept terse so the JSON column stays compact when
+# many fields opt in. Matches the convention in mail.tracking.value and
+# sale.order.line.extra_tax_data.
 _USER = "u"
-_SYSTEM = "s"
+_RULE = "r"
+_VALID_SOURCES = (_USER, _RULE)
 
 
 class Base(models.AbstractModel):
@@ -33,30 +52,32 @@ class Base(models.AbstractModel):
 
     _provenance = fields.Json(
         string="Field Provenance",
-        help="Per-field provenance map: {field_name: 'u'|'s'}. "
-        "'u' = user-supplied, 's' = system-assigned (compute/default).",
+        help="Per-field provenance map.\n"
+        "Absence of an entry means the field is still at its default. "
+        "Entries are of the form {s, b, t, r?}: "
+        "s=source ('u'=user, 'r'=rule/cascade), "
+        "b=writer identifier (login or rule id), "
+        "t=unix timestamp, "
+        "r=optional human-readable rule label.",
         copy=False,
     )
 
     # ------------------------------------------------------------------
-    # Helper API consumed by computes / wizards / tests
+    # Public helper API
     # ------------------------------------------------------------------
     def _user_set(self, fname):
-        """Return True if `fname` was set by the user, not by a compute.
+        """Return True if `fname` was set by the user, not by a default
+        or a cascade.
 
         Resolution order:
-          1. If a provenance map exists and records 'u' for this field,
-             trust it (explicit, persisted).
-          2. Else fall back to `_origin` comparison: if the current value
-             differs from the DB-saved value AND is non-falsy, treat as
-             user-touched (transactional dirty bit). NewId records expose
-             ``_origin`` pointing at the persisted record; regular records
-             return ``self`` for ``_origin`` so the comparison naturally
-             yields False outside an active transaction.
+          1. Persisted provenance map: entry with `s == 'u'` ⇒ True.
+          2. `_origin` fallback: a NewId record whose current value
+             differs from the persisted one and is non-falsy is treated
+             as user-touched (in-form dirty bit before save).
         """
         self.ensure_one()
-        prov = self._provenance or {}
-        if prov.get(fname) == _USER:
+        entry = self._provenance_entry(fname)
+        if entry.get("s") == _USER:
             return True
         origin = self._origin
         if (
@@ -67,6 +88,105 @@ class Base(models.AbstractModel):
         ):
             return True
         return False
+
+    def _stamp_provenance(self, keys, *, source, by, rule=None, when=None):
+        """Public API for cascade methods and integrations.
+
+        Use this when a rule, cascade, EDI inbound, import wizard, or any
+        other non-user writer applies a value, so that the badge surface
+        can attribute the value correctly.
+
+        :param keys:  iterable of tracked field names to stamp.
+        :param source: 'u' (user) or 'r' (rule/cascade). Do not stamp the
+                       default state — its absence is informative.
+        :param by: stable string identifier of the writer. Required and
+                   non-empty. Examples:
+                     - 'sot.cascade' for sale_order_type propagation
+                     - 'edi:l10n_gr_edi' for Greek e-invoicing inbound
+                     - 'import' for bulk loaders
+                     - a user login for explicit attribution.
+        :param rule: optional human-readable label rendered in the badge
+                     tooltip ("Sale Order Type cascade").
+        :param when: optional unix timestamp; defaults to `time.time()`.
+        """
+        if source not in _VALID_SOURCES:
+            raise ValueError(
+                "_stamp_provenance: source must be 'u' or 'r' "
+                f"(absence of an entry already means default); got {source!r}"
+            )
+        if not by:
+            raise ValueError(
+                "_stamp_provenance: 'by' must be a non-empty string identifier"
+            )
+        tracked = self._field_track_set()
+        keys = [k for k in keys if k in tracked]
+        if not keys:
+            return
+        self._stamp_provenance_keys(
+            keys,
+            source=source,
+            by=by,
+            rule=rule,
+            when=when,
+        )
+
+    def _provenance_for(self, fname):
+        """Return the badge-tooltip dict for `fname`.
+
+        Shape:
+            {
+                "state":  "default" | "user" | "rule",
+                "label":  human-readable summary,
+                "by":     writer identifier (omitted for default),
+                "rule":   rule label (only for state=="rule" with `r`),
+                "when":   ISO-8601 timestamp (None if unknown),
+            }
+
+        Consumed by the OWL widget; also useful in tests for golden
+        assertions.
+        """
+        self.ensure_one()
+        entry = self._provenance_entry(fname)
+        if not entry or "s" not in entry:
+            return {
+                "state": "default",
+                "label": "Default value",
+                "when": (
+                    self.create_date.replace(tzinfo=timezone.utc).isoformat()
+                    if self.create_date
+                    else None
+                ),
+            }
+        source = entry.get("s")
+        by = entry.get("b") or "system"
+        when = entry.get("t")
+        when_iso = (
+            datetime.fromtimestamp(when, tz=timezone.utc).isoformat()
+            if isinstance(when, int | float)
+            else None
+        )
+        if source == _USER:
+            return {
+                "state": "user",
+                "by": by,
+                "label": f"Set by user {by}",
+                "when": when_iso,
+            }
+        if source == _RULE:
+            label_name = entry.get("r") or by
+            return {
+                "state": "rule",
+                "by": by,
+                "rule": entry.get("r"),
+                "label": f"Set by {label_name}",
+                "when": when_iso,
+            }
+        # Unknown source — degrade to default semantics rather than crash.
+        return {
+            "state": "default",
+            "label": "Default value",
+            "when": None,
+        }
 
     # ------------------------------------------------------------------
     # ORM hooks — stamp provenance on user writes
@@ -79,8 +199,6 @@ class Base(models.AbstractModel):
         return records
 
     def write(self, vals):
-        # Skip the stamping path entirely when called from our own
-        # provenance bookkeeping or when no tracked field is in vals.
         if self.env.context.get("_prov_skip"):
             return super().write(vals)
         tracked = self._field_track_set()
@@ -91,16 +209,14 @@ class Base(models.AbstractModel):
         return res
 
     # ------------------------------------------------------------------
-    # Modern web client entry points — surface _provenance alongside
-    # tracked fields. Form views in 18.0 call web_read / web_search_read;
-    # the legacy read() override is kept for backwards compatibility but
-    # is rarely the hot path.
+    # Web client integration — surface _provenance alongside tracked
+    # fields. Form views in 18.0+ call web_read; the legacy read()
+    # override is kept thin for backwards compat.
     # ------------------------------------------------------------------
     def web_read(self, specification):
         result = super().web_read(specification)
         if not result or not self._field_track_set():
             return result
-        # Only emit the map when the client asked for a tracked field.
         if not any(name in self._field_track_set() for name in specification):
             return result
         prov_by_id = {r.id: (r._provenance or {}) for r in self}
@@ -114,9 +230,9 @@ class Base(models.AbstractModel):
     @api.model
     @tools.ormcache("self._name")
     def _field_track_set(self):
-        """Cached set of field names on this model that opt-in via
-        `ir.model.fields.track_provenance=True`. Invalidated when an
-        `ir.model.fields` row toggles the flag (see ir_model_fields.py).
+        """Cached set of opted-in field names on this model. Invalidated
+        when `ir.model.fields.track_provenance` toggles (see
+        ir_model_fields.py).
         """
         return frozenset(
             self.env["ir.model.fields"]
@@ -130,6 +246,18 @@ class Base(models.AbstractModel):
             .mapped("name")
         )
 
+    def _provenance_entry(self, fname):
+        """Return a dict-shaped entry for `fname`, normalizing the legacy
+        bare-string form (`"u"` / `"s"`) into the dict shape. Callers
+        outside this module should prefer `_provenance_for`.
+        """
+        self.ensure_one()
+        raw = (self._provenance or {}).get(fname)
+        if isinstance(raw, str):
+            # Legacy v0.1 schema — keep readable while DBs migrate.
+            return {"s": raw} if raw in _VALID_SOURCES else {}
+        return dict(raw) if raw else {}
+
     def _stamp_provenance_from_vals(self, vals_list, source):
         tracked = self._field_track_set()
         for rec, vals in zip(self, vals_list, strict=False):
@@ -137,9 +265,23 @@ class Base(models.AbstractModel):
             if keys:
                 rec._stamp_provenance_keys(keys, source=source)
 
-    def _stamp_provenance_keys(self, keys, source):
+    def _stamp_provenance_keys(self, keys, source, by=None, when=None, rule=None):
+        """Write the stamping. One UPDATE per record, regardless of
+        how many keys are stamped.
+
+        `by` defaults to `env.user.login` for user writes. For rule writes
+        the public `_stamp_provenance` already enforced a non-empty `by`,
+        so this private path shouldn't see `None`.
+        """
+        if not by:
+            by = self.env.user.login if source == _USER else "system"
+        if when is None:
+            when = int(time.time())
         for rec in self:
             current = dict(rec._provenance or {})
             for k in keys:
-                current[k] = source
+                entry = {"s": source, "b": by, "t": when}
+                if rule:
+                    entry["r"] = rule
+                current[k] = entry
             rec.with_context(_prov_skip=True).write({"_provenance": current})

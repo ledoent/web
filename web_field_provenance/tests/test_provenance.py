@@ -205,3 +205,101 @@ class TestProvenance(BaseCommon):
         info = partner._provenance_for("comment")
         # The ISO timestamp serializes the frozen-in-the-past time.
         self.assertIn("T", info["when"])
+
+    # ------------------------------------------------------------------
+    # Client-side payload sanitization (security)
+    # ------------------------------------------------------------------
+    def test_client_provenance_write_forces_env_user(self):
+        """A client-supplied entry that claims a fake `b` must be
+        overwritten with `env.user.login` on save."""
+        partner = self.env["res.partner"].create({"name": "Anti-Spoof"})
+        partner.write(
+            {
+                "_provenance": {
+                    "comment": {"s": "u", "b": "attacker", "t": 0},
+                }
+            }
+        )
+        entry = (partner._provenance or {})["comment"]
+        self.assertEqual(
+            entry["b"],
+            self.env.user.login,
+            "Server must overwrite client-supplied `b` with env.user.login",
+        )
+        self.assertGreater(
+            entry["t"], 0, "Server must overwrite client-supplied timestamp"
+        )
+
+    def test_client_cannot_claim_rule_provenance(self):
+        """Client-side writes must never assert rule provenance — only
+        server-side cascade callers (via `_stamp_provenance`) may."""
+        partner = self.env["res.partner"].create({"name": "No Rule Claim"})
+        partner.write(
+            {
+                "_provenance": {
+                    "comment": {
+                        "s": "r",
+                        "b": "fake.cascade",
+                        "t": 0,
+                        "r": "Fake Rule",
+                    },
+                }
+            }
+        )
+        self.assertNotIn(
+            "comment",
+            partner._provenance or {},
+            "Client-asserted rule entries must be dropped by sanitization",
+        )
+
+    def test_client_provenance_non_dict_payload_rejected(self):
+        partner = self.env["res.partner"].create({"name": "Junk Payload"})
+        partner.write({"_provenance": "not a dict"})
+        self.assertFalse(
+            partner._provenance,
+            "Non-dict client payloads must be sanitized to empty",
+        )
+
+    # ------------------------------------------------------------------
+    # Backward-compat: legacy bare-string entries
+    # ------------------------------------------------------------------
+    def test_legacy_system_string_falls_back_to_default(self):
+        """v0.1 used 's' for system-assigned. With the 3-state schema,
+        that maps to "default" semantics — the value isn't user-anchored
+        and the badge shows the default state."""
+        partner = self.env["res.partner"].create({"name": "Legacy System"})
+        partner.with_context(_prov_skip=True).write({"_provenance": {"comment": "s"}})
+        self.assertFalse(partner._user_set("comment"))
+        info = partner._provenance_for("comment")
+        self.assertEqual(info["state"], "default")
+
+    # ------------------------------------------------------------------
+    # Multi-record stamping
+    # ------------------------------------------------------------------
+    def test_multirecord_stamp_writes_each(self):
+        p1 = self.env["res.partner"].create({"name": "Multi 1"})
+        p2 = self.env["res.partner"].create({"name": "Multi 2"})
+        (p1 + p2)._stamp_provenance(["comment"], source="r", by="batch.recompute")
+        for p in (p1, p2):
+            entry = (p._provenance or {}).get("comment")
+            self.assertEqual(entry["s"], "r")
+            self.assertEqual(entry["b"], "batch.recompute")
+
+    # ------------------------------------------------------------------
+    # Cache invalidation on field unlink
+    # ------------------------------------------------------------------
+    def test_unlink_invalidates_track_cache(self):
+        """Removing the track_provenance flag via unlink (or by deleting
+        the ir.model.fields row, which we simulate via direct SQL) must
+        invalidate the cached `_field_track_set` so subsequent creates
+        don't stamp."""
+        # Toggle off via SQL — same path tests use elsewhere.
+        self._set_track_provenance(self.field_comment, False)
+        p = self.env["res.partner"].create({"name": "Post Untrack", "comment": "x"})
+        self.assertNotIn(
+            "comment",
+            p._provenance or {},
+            "After cache invalidation, the field should not be stamped",
+        )
+        # Restore for the rest of the class.
+        self._set_track_provenance(self.field_comment, True)

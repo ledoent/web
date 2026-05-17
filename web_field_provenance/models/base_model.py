@@ -31,6 +31,7 @@ icon next to the field; the `_provenance_for(fname)` method returns the
 tooltip dict.
 """
 
+import json
 import time
 from datetime import datetime, timezone
 
@@ -298,8 +299,23 @@ class Base(models.AbstractModel):
                 rec._stamp_provenance_keys(keys, source=source)
 
     def _stamp_provenance_keys(self, keys, source, by=None, when=None, rule=None):
-        """Write the stamping. One UPDATE per record, regardless of
-        how many keys are stamped.
+        """Persist the stamping. One UPDATE per persistent record.
+
+        Skips records whose `id` is a `NewId` — i.e. unsaved records
+        living inside an Odoo Form / onchange cycle. Stamping those
+        would force `_provenance` into the onchange-diff result and
+        break form views that don't declare the field (which is most
+        of them — `_provenance` is consumed via `web_read` by the OWL
+        badge, not via the view spec). On the eventual save the
+        `create()` hook will stamp from `vals`, which includes the
+        cascade-resolved value — so attribution is preserved with
+        the caveat that NewId-time cascade stamps degrade to `s='u'`
+        rather than `s='r'`. Acceptable for v1; a deferred-flush
+        mechanism is the right long-term fix.
+
+        We also bypass `write()` and use raw SQL: routing through the
+        ORM would re-trigger compute chains and tracking machinery for
+        what is conceptually a metadata side-effect.
 
         `by` defaults to `env.user.login` for user writes. For rule writes
         the public `_stamp_provenance` already enforced a non-empty `by`,
@@ -309,11 +325,30 @@ class Base(models.AbstractModel):
             by = self.env.user.login if source == _USER else "system"
         if when is None:
             when = int(time.time())
-        for rec in self:
+        table = self._table
+        # Only stamp persistent records. NewId records show up in two
+        # paths: Form/onchange (stamping there leaks `_provenance` into
+        # the diff and trips `KeyError: '_provenance'` in views that
+        # don't declare the field — most of them) and `create()`
+        # precomputes (no row to UPDATE yet). For new-record cascade
+        # attribution, the badge degrades to the "default" state until
+        # the next persistent-record write touches the field — at which
+        # point this stamping path catches it correctly.
+        persistent = self.filtered(lambda r: isinstance(r.id, int))
+        for rec in persistent:
             current = dict(rec._provenance or {})
             for k in keys:
                 entry = {"s": source, "b": by, "t": when}
                 if rule:
                     entry["r"] = rule
                 current[k] = entry
-            rec.with_context(_prov_skip=True).write({"_provenance": current})
+            self.env.cr.execute(
+                f'UPDATE "{table}" SET "_provenance" = %s WHERE id = %s',
+                [json.dumps(current), rec.id],
+            )
+            # Invalidate (don't set) so the new value isn't tracked as
+            # an in-flight write — that's what makes `_provenance` show
+            # up in onchange results and breaks Form tests with
+            # `KeyError: '_provenance'`. Subsequent reads round-trip
+            # to the DB, which is fine because the field is read-rare.
+            rec.invalidate_recordset(["_provenance"])

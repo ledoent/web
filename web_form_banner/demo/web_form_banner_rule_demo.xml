@@ -61,4 +61,24 @@ else:
 {"visible": not bool(draft.category_id)}
      ]]></field>
     </record>
+    <!-- Client-side fast path demo: visibility and field interpolation
+         both evaluated in the browser, zero RPC.
+         Uses only base-partner fields (name, email) so the demo works on
+         a clean install without sale/CRM. References to fields not in
+         the form view (e.g. customer_rank, which sale adds) would cause
+         a py.js EvalError "Name X not defined" and break any tour that
+         opens the partner form. -->
+    <record id="demo_rule_partner_client_side" model="web.form.banner.rule">
+        <field name="name">Contact needs an email (client-side)</field>
+        <field name="model_id" ref="base.model_res_partner" />
+        <field name="severity">warning</field>
+        <field name="target_xpath">//sheet</field>
+        <field name="position">before</field>
+        <field name="client_side" eval="True" />
+        <field name="client_condition">not email and name</field>
+        <field name="message_is_html" eval="True" />
+        <field
+            name="message"
+        ><![CDATA[Contact <strong>${name}</strong> has no email on file. Workflows requiring email delivery will fail.]]></field>
+    </record>
 </odoo>

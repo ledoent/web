@@ -19,10 +19,12 @@
                 <field name="position" optional="show" />
                 <field name="message" optional="show" />
                 <field name="message_is_html" optional="show" />
+                <field name="client_side" optional="show" />
+                <field name="client_condition" optional="hide" />
                 <field
                     name="message_value_code"
                     placeholder="return {'visible': True, 'values': {'title': '...'}}"
-                    optional="show"
+                    optional="hide"
                 />
             </list>
         </field>
@@ -59,6 +61,7 @@
                                 context="{'active_test': False}"
                                 options="{'no_create': True}"
                                 placeholder="Recompute on change (new forms)"
+                                invisible="client_side"
                             />
                             <field name="severity" />
                         </group>
@@ -70,6 +73,13 @@
                             />
                             <field name="target_xpath" placeholder="//sheet" />
                             <field name="position" />
+                            <field name="client_side" />
+                            <field
+                                name="client_condition"
+                                invisible="not client_side"
+                                required="client_side"
+                                placeholder="state == 'draft' and amount_total &gt; 1000"
+                            />
                         </group>
                     </group>
                     <group>
@@ -84,6 +94,7 @@
                             string="Message Value Code"
                             name="message_value_code"
                             autofocus="autofocus"
+                            invisible="client_side"
                         >
                             <field
                                 name="message_value_code"
@@ -91,7 +102,66 @@
                                 options="{'mode': 'python'}"
                             />
                         </page>
-                        <page string="Help">
+                        <page
+                            string="Client-side Help"
+                            name="client_side_help"
+                            invisible="not client_side"
+                        >
+                            <h3>Help for Client-side Mode</h3>
+                            <p>In client-side mode the banner is evaluated by Odoo's
+                                native form view compiler (py.js) — no server round-trip
+                                per keystroke. Use this whenever your condition fits the
+                                py.js grammar.</p>
+                            <p>
+                                <strong>What works in client_condition:</strong>
+                            </p>
+                            <ul>
+                                <li>Comparisons (<code>==</code>, <code>!=</code>, <code
+                                >
+                                    &lt;
+                                </code>, <code>
+                                    &gt;
+                                </code>, <code>&lt;=</code>, <code>&gt;=</code>)</li>
+                                <li>Boolean ops (<code>and</code>, <code
+                                >or</code>, <code>not</code>)</li>
+                                <li><code>in</code> / <code
+                                >not in</code> on lists and strings</li>
+                                <li>Attribute access (<code
+                                >partner_id.email</code>, <code
+                                >company_id.country_id.code</code>)</li>
+                                <li>Built-ins: <code>len()</code>, <code
+                                >bool()</code>, <code>min()</code>, <code
+                                >max()</code>, <code>set()</code></li>
+                                <li>Ternary if: <code>x if cond else y</code></li>
+                            </ul>
+                            <p>
+                                <strong>What does NOT work — fall back to server-side
+                                    mode (Message Value Code):</strong>
+                            </p>
+                            <ul>
+                                <li>Arbitrary method calls (<code
+                                >.filtered()</code>, <code
+                                >.mapped()</code>, custom helpers)</li>
+                                <li>Slicing (<code>list[0:5]</code>)</li>
+                                <li>Lambdas, comprehensions</li>
+                                <li>ORM searches, related-record traversal beyond what's
+                                    loaded on the form</li>
+                            </ul>
+                            <p>
+                                <strong
+                                >Interpolating field values in the message:</strong>
+                            </p>
+                            <p>Use either inline <code
+                            >&lt;field name="foo"/&gt;</code> tags, or the shorter
+                                <code>${foo}</code> syntax — the latter is rewritten to
+                                a reactive <code
+                            >&lt;field/&gt;</code> at view-load time.
+                                Example message (HTML mode):</p>
+                            <pre
+                                style="white-space: pre-wrap"
+                            >Order ${name} exceeds &lt;strong&gt;${partner_id}&lt;/strong&gt;'s credit limit of ${partner_id.credit_limit}.</pre>
+                        </page>
+                        <page string="Help" invisible="client_side">
                             <h3>Help for Message Valude Code</h3>
                             <p
                             >Available evaluation context variables are as follows:</p>

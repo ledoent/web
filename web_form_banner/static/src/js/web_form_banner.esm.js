@@ -63,8 +63,12 @@ const bannersIn = (ctrl) => {
     const r = recRoot(ctrl),
         m = r && r.resModel;
     if (!m) return [];
+    // Client-side banners (data-client="1") are self-contained: visibility
+    // is driven by Odoo's native invisible= attribute via py.js, content is
+    // rendered by inline <field> widgets. Skip them — the RPC machinery
+    // below is for server-driven rules only.
     return Array.from(document.querySelectorAll(".o_form_view [data-rule-id]")).filter(
-        (el) => el.dataset.model === m
+        (el) => el.dataset.model === m && el.dataset.client !== "1"
     );
 };
 const triggerNames = (ctrl) => {

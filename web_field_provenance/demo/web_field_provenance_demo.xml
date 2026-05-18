@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo>
+    <!--
+    Demo view: opt-in `res.partner.title` to the provenance badge so the
+    widget can be visually verified against the three states (default /
+    rule / user). `parent_id` is rendered with a specialized partner-m2o
+    widget in core that can't be replaced via inheritance, so `title`
+    serves as the demo target. This is loaded only with demo data and
+    is safe to install on a production DB — the underlying field's
+    `track_provenance` flag is the real opt-in switch and is OFF until
+    set explicitly by an admin.
+    -->
+    <record id="view_partner_form_provenance_demo" model="ir.ui.view">
+        <field name="name">res.partner.form.web_field_provenance.demo</field>
+        <field name="model">res.partner</field>
+        <field name="inherit_id" ref="base.view_partner_form" />
+        <field name="arch" type="xml">
+            <field name="title" position="replace">
+                <field name="title" widget="provenance_m2o" />
+            </field>
+        </field>
+    </record>
+</odoo>

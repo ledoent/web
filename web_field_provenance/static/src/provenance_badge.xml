@@ -6,7 +6,7 @@
             <t t-call="web.Many2OneField" />
             <button
                 class="o_provenance_badge btn btn-sm p-0 ms-1"
-                t-att-class="'o_provenance_' + state"
+                t-att-class="'o_provenance_' + badgeState"
                 t-att-title="badgeTitle"
                 t-on-click="onBadgeClick"
                 type="button"

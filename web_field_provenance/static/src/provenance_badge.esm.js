@@ -45,7 +45,12 @@ export class ProvenanceMany2OneField extends Many2OneField {
         return raw;
     }
 
-    get state() {
+    get badgeState() {
+        // NOTE: renamed from `state` to avoid colliding with the
+        // `state` property the base `Many2OneField` sets in its
+        // setup() — JS raises `Cannot set property state of ... which
+        // has only a getter` when a subclass defines a getter without
+        // a setter and the parent class tries to write to it.
         const e = this.entry;
         if (!e || !e.s) {
             return "default";
@@ -60,10 +65,10 @@ export class ProvenanceMany2OneField extends Many2OneField {
     }
 
     get badgeIconClass() {
-        if (this.state === "user") {
+        if (this.badgeState === "user") {
             return "fa fa-pencil";
         }
-        if (this.state === "rule") {
+        if (this.badgeState === "rule") {
             return "fa fa-cog text-success";
         }
         return "fa fa-circle-o text-muted";
@@ -72,10 +77,10 @@ export class ProvenanceMany2OneField extends Many2OneField {
     get badgeTitle() {
         const e = this.entry;
         const when = e?.t ? new Date(e.t * 1000).toLocaleString() : null;
-        if (this.state === "user") {
+        if (this.badgeState === "user") {
             return _t("Set by user %s%s", e.b || "?", when ? " at " + when : "");
         }
-        if (this.state === "rule") {
+        if (this.badgeState === "rule") {
             const label = e.r || e.b || _t("a rule");
             return _t("Set by %s%s", label, when ? " at " + when : "");
         }
@@ -103,6 +108,13 @@ export const provenanceMany2OneField = {
     component: ProvenanceMany2OneField,
     displayName: ({string}) => string,
     supportedOptions: many2OneField.supportedOptions,
+    // Pull `_provenance` into the record alongside the field this
+    // widget renders. Without this, `record.data._provenance` is
+    // undefined because the view spec doesn't declare the field.
+    fieldDependencies: [
+        ...(many2OneField.fieldDependencies || []),
+        {name: "_provenance", type: "json"},
+    ],
 };
 
 registry.category("fields").add("provenance_m2o", provenanceMany2OneField);

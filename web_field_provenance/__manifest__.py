@@ -13,6 +13,9 @@
     "data": [
         "views/ir_model_fields_views.xml",
     ],
+    "demo": [
+        "demo/web_field_provenance_demo.xml",
+    ],
     "assets": {
         "web.assets_backend": [
             "web_field_provenance/static/src/**/*",

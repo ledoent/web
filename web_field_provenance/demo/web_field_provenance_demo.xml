@@ -14,6 +14,12 @@
         <field name="name">res.partner.form.web_field_provenance.demo</field>
         <field name="model">res.partner</field>
         <field name="inherit_id" ref="base.view_partner_form" />
+        <!-- priority 99: required by OCA pre-commit
+             (xml-view-dangerous-replace-low-priority) when an inheritance
+             view does a `position="replace"`. Without a high priority, two
+             modules trying to replace the same field at default priority 0
+             would silently clobber each other. -->
+        <field name="priority">99</field>
         <field name="arch" type="xml">
             <field name="title" position="replace">
                 <field name="title" widget="provenance_m2o" />

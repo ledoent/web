@@ -1,12 +1,11 @@
-import {EventBus, markup, toRaw} from "@odoo/owl";
+import {EventBus, toRaw} from "@odoo/owl";
+import {isHtmlEmpty, isMarkup} from "@web/core/utils/html";
 import {Chatter} from "@mail/chatter/web_portal/chatter";
-import {SIGNATURE_CLASS} from "@html_editor/main/signature_plugin";
 import {_t} from "@web/core/l10n/translation";
 import {browser} from "@web/core/browser/browser";
 import {childNodes} from "@html_editor/utils/dom_traversal";
 import {parseHTML} from "@html_editor/utils/html";
 import {patch} from "@web/core/utils/patch";
-import {prettifyMessageContent} from "@mail/utils/common/format";
 import {renderToElement} from "@web/core/utils/render";
 import {rpc} from "@web/core/network/rpc";
 import {wrapInlinesInBlocks} from "@html_editor/utils/dom";
@@ -46,49 +45,38 @@ patch(Chatter.prototype, {
     },
     // A rough composer function copy of `onClickFullComposer`
     async openFullComposer() {
-        const newPartners = this.state.thread.suggestedRecipients.filter(
-            (recipient) => recipient.checked && !recipient.persona
-        );
+        const allRecipients = [
+            ...(this.state.thread.suggestedRecipients || []),
+            ...(this.state.thread.additionalRecipients || []),
+        ];
+        const newPartners = allRecipients.filter((recipient) => !recipient.partner_id);
         if (newPartners.length) {
-            const recipientEmails = [];
-            const recipientAdditionalValues = {};
-            newPartners.forEach((recipient) => {
-                recipientEmails.push(recipient.email);
-                recipientAdditionalValues[recipient.email] =
-                    recipient.create_values || {};
-            });
+            const recipientEmails = newPartners.map((recipient) => recipient.email);
             const partners = await rpc("/mail/partner/from_email", {
+                thread_model: this.state.thread.model,
+                thread_id: this.state.thread.id,
                 emails: recipientEmails,
-                additional_values: recipientAdditionalValues,
             });
             for (const index in partners) {
                 const partnerData = partners[index];
-                const persona = this.store.Persona.insert({
-                    ...partnerData,
-                    type: "partner",
-                });
+                const partner = this.store["res.partner"].insert(partnerData);
                 const email = recipientEmails[index];
-                const recipient = this.state.thread.suggestedRecipients.find(
-                    (rec) => rec.email === email
-                );
-                Object.assign(recipient, {persona});
+                const recipient = allRecipients.find((rec) => rec.email === email);
+                if (recipient) {
+                    recipient.partner_id = partner.id;
+                }
             }
         }
-        const body = this.state.thread.composer.text;
-        const validMentions = this.store.getMentionsFromText(body, {
-            mentionedChannels: this.state.thread.composer.mentionedChannels,
-            mentionedPartners: this.state.thread.composer.mentionedPartners,
-        });
-        let default_body = await prettifyMessageContent(body, validMentions);
-        if (!default_body) {
+        let default_body = this.state.thread.composer.composerHtml;
+        if (isHtmlEmpty(default_body)) {
             const composer = toRaw(this.state.thread.composer);
             composer.emailAddSignature = true;
         }
+        const signature =
+            this.state.thread.effectiveSelf?.main_user_id?.getSignatureBlock?.() || "";
         default_body = this.formatDefaultBodyForFullComposer(
             default_body,
-            this.state.thread.composer.emailAddSignature
-                ? markup(this.store.self.signature)
-                : ""
+            this.state.thread.composer.emailAddSignature ? signature : ""
         );
         const action = {
             name: _t("Compose Email"),
@@ -104,18 +92,18 @@ patch(Chatter.prototype, {
                 default_body,
                 default_email_add_signature: false,
                 default_model: this.state.thread.model,
-                default_partner_ids: this.state.thread.suggestedRecipients
-                    .filter((recipient) => recipient.checked)
-                    .map((recipient) => recipient.persona.id),
+                default_partner_ids: allRecipients.map(
+                    (recipient) => recipient.partner_id
+                ),
                 default_res_ids: [this.state.thread.id],
                 default_subtype_xmlid: "mail.mt_comment",
                 mail_post_autofollow: this.state.thread.hasWriteAccess,
             },
         };
         const options = {
-            onClose: (...args) => {
-                const accidentalDiscard = !args.length;
-                const isDiscard = accidentalDiscard || args[0]?.special;
+            onClose: (args) => {
+                const accidentalDiscard = args?.dismiss;
+                const isDiscard = accidentalDiscard || args?.special;
                 if (!isDiscard && this.state.thread.model === "mail.box") {
                     this.notifySendFromMailbox();
                 }
@@ -149,7 +137,7 @@ patch(Chatter.prototype, {
         if (signature) {
             const signatureEl = renderToElement("html_editor.Signature", {
                 signature,
-                signatureClass: SIGNATURE_CLASS,
+                signatureClass: "o-signature-container",
             });
             fragment.append(signatureEl);
         }
@@ -167,25 +155,41 @@ patch(Chatter.prototype, {
     },
     saveContent() {
         const composer = toRaw(this.state.thread.composer);
-        const onSaveContent = (text, emailAddSignature) => {
-            browser.localStorage.setItem(
-                composer.localId,
-                JSON.stringify({emailAddSignature, text})
-            );
+        const onSaveContent = ({composerHtml, emailAddSignature}) => {
+            if (isHtmlEmpty(composerHtml)) {
+                browser.localStorage.removeItem(composer.localId);
+            } else {
+                browser.localStorage.setItem(
+                    composer.localId,
+                    JSON.stringify({
+                        emailAddSignature,
+                        composerHtml: isMarkup(composerHtml)
+                            ? ["markup", composerHtml]
+                            : composerHtml,
+                    })
+                );
+            }
         };
         if (this.isFullComposerOpen) {
             this.fullComposerBus.trigger("SAVE_CONTENT", {onSaveContent});
         } else {
-            onSaveContent(composer.text, true);
+            onSaveContent({
+                composerHtml: composer.composerHtml,
+                emailAddSignature: true,
+            });
         }
     },
     restoreContent() {
         const composer = toRaw(this.state.thread.composer);
+        const raw = browser.localStorage.getItem(composer.localId);
+        if (!raw) {
+            return;
+        }
         try {
-            const config = JSON.parse(browser.localStorage.getItem(composer.localId));
-            if (config.text) {
+            const config = JSON.parse(raw);
+            if (config && !isHtmlEmpty(config.composerHtml)) {
                 composer.emailAddSignature = config.emailAddSignature;
-                composer.text = config.text;
+                composer.composerHtml = config.composerHtml;
             }
         } catch {
             browser.localStorage.removeItem(composer.localId);

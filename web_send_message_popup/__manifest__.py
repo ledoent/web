@@ -9,5 +9,8 @@
     "category": "Hidden",
     "depends": ["web", "mail"],
     "website": "https://github.com/OCA/web",
-    "assets": {"web.assets_backend": ["web_send_message_popup/static/src/**/*.js"]},
+    "assets": {
+        "web.assets_backend": ["web_send_message_popup/static/src/**/*.js"],
+        "web.assets_unit_tests": ["web_send_message_popup/static/tests/**/*"],
+    },
 }

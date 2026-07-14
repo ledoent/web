@@ -163,6 +163,73 @@ else:
   result = {"visible": False}
 ```
 
+## Client-side mode (no server round-trip)
+
+For rules whose visibility condition fits Odoo's client-side
+expression grammar (`py.js`), tick **Client-side** on the rule and write
+your condition in **Client Condition** instead of *Message Value Code*.
+The banner is then rendered as a self-contained `<div invisible="..."/>`
+in the form arch; Odoo's view compiler evaluates visibility against the
+in-memory record on every reactive change — zero RPC, zero JavaScript on
+your side.
+
+What works in `client_condition`:
+
+- Comparisons, boolean ops, `in` / `not in`
+- Attribute access: `partner_id.email`, `company_id.country_id.code`
+- Built-ins: `len()`, `bool()`, `min()`, `max()`, `set()`
+- Ternary `x if cond else y`
+
+What does NOT work — keep using server-side mode for these:
+
+- Arbitrary method calls (`.filtered()`, `.mapped()`, `.search()`)
+- Slicing, lambdas, comprehensions
+- Anything touching records not loaded on the current form
+
+In the message you can interpolate field values either with inline
+`<field name="..."/>` tags or with the shorter `${field_name}` shortcut
+(the module rewrites the latter to a reactive `<field/>` at view-load
+time). Only flat field names are supported in `${...}` — Odoo form arch
+doesn't accept dotted paths like `<field name="partner_id.email"/>`.
+For related-record values, declare a stored related field on the model
+(`fields.Char(related="partner_id.email", store=True)`) and reference
+the flat name.
+
+You don't need to add `<field name="X"/>` placeholders to the form view
+for every name your condition references. The module parses the
+condition at view-load and auto-injects `<field name="X" invisible="True"/>`
+siblings for anything that's missing — `customer_rank > 0 and not email`
+on a partner form works even when `customer_rank` isn't already on the
+view.
+
+**Example — contact missing email (works on the base partner form):**
+
+- Model: `res.partner`
+- Client-side: ✓
+- Client Condition: `not email and name`
+- HTML: ✓
+- Message: `Contact <strong>${name}</strong> has no email on file. Workflows requiring email delivery will fail.`
+
+Toggle email on/off in the form and the banner appears/disappears
+instantly — no Network-tab activity, no `compute_message` RPC.
+
+**Example — high-value draft order (auto-loads `state` if missing):**
+
+- Model: `sale.order`
+- Client-side: ✓
+- Client Condition: `state == 'draft' and amount_total > 10000`
+- Message: `Large draft order: ${amount_total}. Manager approval recommended.`
+
+**Limitations of client-side mode**
+
+- Severity (info/warning/danger) is baked into the alert's CSS class at
+  view-load time. You can't change severity per-record from
+  `client_condition` the way `message_value_code` can return a dynamic
+  `"severity"` key. Use server-side mode if you need per-record severity.
+- The condition has to fit py.js — no method calls outside the listed
+  builtins, no slicing, no lambdas, no comprehensions.
+- `${X.Y}` in messages is rejected; only flat names work.
+
 If we set up the rules for a partner record as shown below:
 
 ![](../static/description/partner_email_rule.png)

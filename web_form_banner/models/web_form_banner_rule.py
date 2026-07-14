@@ -1,7 +1,9 @@
 # Copyright 2025 Quartile (https://www.quartile.co)
 # License AGPL-3.0 or later (https://www.gnu.org/licenses/agpl).
 
+import ast
 import logging
+import re
 from string import Template
 
 from dateutil import parser as dateparse
@@ -146,7 +148,24 @@ class WebFormBannerRule(models.Model):
         "web_form_banner_rule_trigger_field_rel",
         domain="[('model', '=', model_name)]",
         string="Trigger Fields",
-        help="If set, the banner recomputes live when any of these fields change.",
+        help="If set, the banner recomputes live when any of these fields change. "
+        "Only consulted in server-side mode (see 'Client-side').",
+    )
+    client_side = fields.Boolean(
+        help="Render the banner using Odoo's native client-side view compiler "
+        "(py.js + reactive <field/> tags) instead of round-tripping to the "
+        "server on every keystroke. Faster but limited to py.js-compatible "
+        "expressions: no arbitrary method calls, no slicing, no lambdas. "
+        "Use 'message_value_code' (server-side mode) when you need related-"
+        "record traversal, filtered(), or other full-Python logic.",
+    )
+    client_condition = fields.Char(
+        help="py.js-compatible boolean expression. The banner is shown when "
+        "this evaluates to True against the current form record. Examples:\n"
+        "  state == 'draft' and amount_total > 1000\n"
+        "  partner_id and not partner_id.email\n"
+        "  customer_rank > 0 and credit_limit\n"
+        "Only used when 'Client-side' is enabled.",
     )
 
     @api.constrains("target_xpath")
@@ -157,6 +176,66 @@ class WebFormBannerRule(models.Model):
                 etree.XPath(xp or "//sheet")
             except (etree.XPathSyntaxError, etree.XPathEvalError) as e:
                 raise ValidationError(_("Invalid XPath:\n%s") % e) from e
+
+    @api.constrains("client_side", "client_condition")
+    def _check_client_condition(self):
+        """When client-side mode is enabled, require a syntactically valid
+        Python expression in client_condition. We can't fully validate
+        py.js semantics from Python (no method-call whitelist enforcement
+        here, no slicing detection), but ast.parse catches the bulk of
+        typos and lets admins move on with confidence."""
+        for rec in self:
+            if not rec.client_side:
+                continue
+            expr = (rec.client_condition or "").strip()
+            if not expr:
+                raise ValidationError(
+                    _(
+                        "Rule '%s' is set to client-side mode but has no "
+                        "client_condition. Provide a py.js-compatible "
+                        "boolean expression."
+                    )
+                    % rec.display_name
+                )
+            try:
+                ast.parse(expr, mode="eval")
+            except SyntaxError as e:
+                raise ValidationError(
+                    _("Invalid client_condition for rule '%(name)s':\n%(err)s")
+                    % {"name": rec.display_name, "err": e}
+                ) from e
+
+    # ``${field_name}`` shorthand → ``<field name="field_name"/>`` for the
+    # client-side fast path. Mirrors the existing server-side ``${var}``
+    # substitution syntax so admins don't have to learn two templates.
+    #
+    # Only bare field names are supported — dotted paths like
+    # ``${partner_id.email}`` would rewrite to
+    # ``<field name="partner_id.email"/>`` which is not valid Odoo form
+    # arch. Admins who need a related field's value should declare it as
+    # a stored related field on the model and reference that flat name.
+    _CLIENT_VAR_RE = re.compile(r"\$\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
+
+    def _to_client_arch(self):
+        """Render the message as an HTML fragment suitable for embedding in
+        the form arch under a client-side banner div.
+
+        - When message_is_html is True, return the message verbatim with
+          ``${field_name}`` replaced by ``<field name="field_name"/>``.
+        - When message_is_html is False, HTML-escape each line and join
+          with ``<br/>``, then run the same ``${var}`` substitution.
+        """
+        self.ensure_one()
+        msg = self.message or ""
+
+        def _sub(match):
+            return f'<field name="{match.group(1)}"/>'
+
+        if self.message_is_html:
+            return self._CLIENT_VAR_RE.sub(_sub, msg)
+        lines = msg.split("\n")
+        escaped = "<br/>".join(str(escape(line)) for line in lines)
+        return self._CLIENT_VAR_RE.sub(_sub, escaped)
 
     @api.model
     def _build_form_url(self, rec):

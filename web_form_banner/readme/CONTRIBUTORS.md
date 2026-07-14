@@ -1,3 +1,5 @@
 - [Quartile](https://www.quartile.co):
   - Yoshi Tashiro
   - Aung Ko Ko Lin
+- [Ledoweb](https://ledoweb.com):
+  - Dan Kendall \<dkendall@ledoweb.com\>

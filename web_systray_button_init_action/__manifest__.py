@@ -4,12 +4,12 @@
 {
     "name": "Web Systray Button Init Action",
     "summary": "Add a button to go to the user init action.",
-    "version": "19.0.1.0.0",
+    "version": "20.0.1.0.0",
     "category": "Web",
     "website": "https://github.com/OCA/web",
     "author": "Tecnativa, Odoo Community Association (OCA)",
     "license": "LGPL-3",
-    "depends": ["web"],
+    "depends": ["web", "web_tour"],
     "data": [
         "views/res_users_views.xml",
     ],

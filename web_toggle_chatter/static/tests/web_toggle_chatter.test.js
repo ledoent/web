@@ -10,7 +10,7 @@ import {
 import {expect, test} from "@odoo/hoot";
 import {EventBus} from "@odoo/owl";
 import {FormCompiler} from "@web/views/form/form_compiler";
-import {SIZES} from "@web/core/ui/ui_service";
+import {SIZES} from "@web/core/ui/ui_utils";
 
 class Partner extends models.Model {
     name = fields.Char();
@@ -118,6 +118,10 @@ test("Clicking toggle collapses the chatter", async () => {
 
     expect(".o-mail-Form-chatter").toHaveStyle({opacity: "0"});
     expect(".o-mail-Form-chatter").toHaveStyle({maxWidth: "0px"});
+    expect(".o_web_toggle_chatter_toggle_btn .oi").toHaveAttribute(
+        "data-icon",
+        "keyboard_arrow_left"
+    );
 });
 
 test("Clicking toggle twice restores the chatter", async () => {
@@ -132,6 +136,10 @@ test("Clicking toggle twice restores the chatter", async () => {
 
     expect(".o-mail-Form-chatter").not.toHaveStyle({maxWidth: "0px"});
     expect(".o-mail-Form-chatter").toHaveStyle({opacity: "1"});
+    expect(".o_web_toggle_chatter_toggle_btn .oi").toHaveAttribute(
+        "data-icon",
+        "keyboard_arrow_right"
+    );
 });
 
 test("Stacked (mobile) layout does not apply custom chatter collapse styles", async () => {

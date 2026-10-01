@@ -1,3 +1,4 @@
 - [Vortex Dimensión Digital](https://www.dimensionvortex.com/):
   - Jorge Rosado Julián \<<jorge.rosado@dimensionvortex.com>\>
   - Juan L. Sánchez \<<juan.sanchez@dimensionvortex.com>\>
+- Don Kendall \<<dkendall@ledoweb.com>\>

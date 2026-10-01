@@ -12,7 +12,7 @@
         >
             <attribute
                 name="t-attf-style"
-            >{{getDynamicColoredStyle(column, record)}}</attribute>
+            >{{this.getDynamicColoredStyle(column, record)}}</attribute>
         </xpath>
     </t>
 

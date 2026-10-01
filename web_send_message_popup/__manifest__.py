@@ -2,7 +2,7 @@
 # License AGPL-3.0 or later (http://gnu.org/licenses/agpl).
 {
     "name": "Web Send Message as Popup",
-    "version": "19.0.1.0.0",
+    "version": "20.0.1.0.0",
     "author": "Camptocamp, Odoo Community Association (OCA)",
     "maintainer": "Camptocamp",
     "license": "AGPL-3",

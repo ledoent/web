@@ -1,9 +1,4 @@
-import {
-    asyncStep,
-    mockService,
-    patchWithCleanup,
-    waitForSteps,
-} from "@web/../tests/web_test_helpers";
+import {mockService, patchWithCleanup} from "@web/../tests/web_test_helpers";
 import {
     click,
     contains,
@@ -14,7 +9,7 @@ import {
     startServer,
 } from "@mail/../tests/mail_test_helpers";
 import {describe, expect, test} from "@odoo/hoot";
-import {Chatter} from "@mail/chatter/web_portal/chatter";
+import {Chatter} from "@mail/chatter/web_portal_project/chatter";
 import {animationFrame} from "@odoo/hoot-mock";
 describe.current.tags("desktop");
 defineMailModels();
@@ -40,7 +35,7 @@ function mockFullComposerAction() {
                 return super.doAction(...arguments);
             }
             captured.action = action;
-            asyncStep("full_composer");
+            expect.step("full_composer");
             return Promise.resolve();
         },
     });
@@ -60,7 +55,8 @@ describe("WebSendMessagePopup", () => {
         // toggleComposer("message") is the feature, and routing through it is
         // what catches the patch failing to apply or being ordered wrong.
         await click("button", {text: "Send message"});
-        await waitForSteps(["full_composer"]);
+        await animationFrame();
+        expect.verifySteps(["full_composer"]);
         // The inline composer must never appear — that is the whole module.
         await contains(".o-mail-Composer", {count: 0});
         const {context, target} = captured.action;
@@ -78,7 +74,8 @@ describe("WebSendMessagePopup", () => {
         await start();
         await openFormView("res.fake", fakeId);
         await click("button", {text: "Send message"});
-        await waitForSteps(["full_composer"]);
+        await animationFrame();
+        expect.verifySteps(["full_composer"]);
         const {context} = captured.action;
         // Without this the wizard hides the followers-only recipients widget
         // and makes the forward-style one required.
@@ -91,6 +88,7 @@ describe("WebSendMessagePopup", () => {
         expect("mail_post_autofollow" in context).toBe(false);
         // Recipients without a partner_id are filtered out, as core does.
         expect(context.default_partner_ids).toEqual([]);
+        expect(context.default_partner_cc_ids).toEqual([]);
     });
 
     test("body is built for the editor and carries the signature", async () => {
@@ -101,7 +99,8 @@ describe("WebSendMessagePopup", () => {
         await start();
         await openFormView("res.fake", fakeId);
         await click("button", {text: "Send message"});
-        await waitForSteps(["full_composer"]);
+        await animationFrame();
+        expect.verifySteps(["full_composer"]);
         const {context} = captured.action;
         // The wizard renders this as html, so it must not arrive as a bare string.
         expect(context.default_body.toString()).toMatch(/^<(DIV|div|BR|br)/);
@@ -130,7 +129,7 @@ describe("WebSendMessagePopup", () => {
         // discard that reaches it silently saves the underlying form.
         patchWithCleanup(Chatter.prototype, {
             reloadParentView() {
-                asyncStep("reload");
+                expect.step("reload");
                 return super.reloadParentView(...arguments);
             },
         });
@@ -151,12 +150,12 @@ describe("WebSendMessagePopup", () => {
         await click("button", {text: "Send message"});
         captured.onClose({special: true});
         await animationFrame();
-        await waitForSteps([]);
+        expect.verifySteps([]);
 
         // Sent (no dismiss/special) — reload is expected.
         await click("button", {text: "Send message"});
         captured.onClose({});
         await animationFrame();
-        await waitForSteps(["reload"]);
+        expect.verifySteps(["reload"]);
     });
 });

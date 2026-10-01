@@ -1,10 +1,6 @@
 import {EventBus, markup, toRaw} from "@odoo/owl";
-import {
-    createDocumentFragmentFromContent,
-    isHtmlEmpty,
-    isMarkup,
-} from "@web/core/utils/html";
-import {Chatter} from "@mail/chatter/web_portal/chatter";
+import {isHtmlEmpty, isMarkup} from "@web/core/utils/html";
+import {Chatter} from "@mail/chatter/web_portal_project/chatter";
 // Core patches Chatter.prototype.toggleComposer in this file and does NOT call
 // super, so whichever patch is applied last wins outright. Importing it here
 // for its side effect guarantees core is patched before we are, which puts our
@@ -12,11 +8,8 @@ import {Chatter} from "@mail/chatter/web_portal/chatter";
 import "@mail/chatter/web/chatter_patch";
 import {_t} from "@web/core/l10n/translation";
 import {browser} from "@web/core/browser/browser";
-import {childNodes} from "@html_editor/utils/dom_traversal";
 import {patch} from "@web/core/utils/patch";
-import {renderToElement} from "@web/core/utils/render";
 import {rpc} from "@web/core/network/rpc";
-import {wrapInlinesInBlocks} from "@html_editor/utils/dom";
 
 // There's another, more unorthodox, way to accomplish the same thing, but with less
 // lines!
@@ -44,14 +37,14 @@ patch(Chatter.prototype, {
             this.closeSearch();
             this.state.composerType = false;
             const open = async () => {
-                await this.updateRecipients(this.props.record, mode);
+                await this.updateRecipients(this.webChatterProps.record, mode);
                 await this.openFullComposer();
             };
             if (this.state.thread.id) {
                 open();
             } else {
                 this.onThreadCreated = open;
-                this.props.saveRecord?.();
+                this.webChatterProps.saveRecord?.();
             }
             return;
         }
@@ -107,8 +100,11 @@ patch(Chatter.prototype, {
                 default_email_add_signature: false,
                 default_model: this.state.thread.model,
                 default_partner_ids: allRecipients
-                    .filter((recipient) => recipient.partner_id)
-                    .map((recipient) => recipient.partner_id),
+                    .filter((r) => r.recipient_type !== "cc" && r.partner_id)
+                    .map((r) => r.partner_id),
+                default_partner_cc_ids: allRecipients
+                    .filter((r) => r.recipient_type === "cc" && r.partner_id)
+                    .map((r) => r.partner_id),
                 default_res_ids: [this.state.thread.id],
                 default_subtype_xmlid: "mail.mt_comment",
                 clicked_on_full_composer: true,
@@ -149,22 +145,10 @@ patch(Chatter.prototype, {
     },
     // Method copied not from the composer file but the composer_patch one
     formatDefaultBodyForFullComposer(defaultBody, signature = "") {
-        const fragment = createDocumentFragmentFromContent(defaultBody).body;
-        if (!fragment.firstChild) {
-            fragment.append(document.createElement("BR"));
-        }
         if (signature) {
-            const signatureEl = renderToElement("html_editor.Signature", {
-                signature,
-                signatureClass: "o-signature-container",
-            });
-            fragment.append(document.createElement("BR"));
-            fragment.append(signatureEl);
+            defaultBody = markup`${defaultBody}<br>${signature}`;
         }
-        const container = document.createElement("DIV");
-        container.append(...childNodes(fragment));
-        wrapInlinesInBlocks(container, {baseContainerNodeName: "DIV"});
-        return markup(container.innerHTML);
+        return markup`<div>${defaultBody}</div>`; // As to not wrap in <p> by html_sanitize
     },
     // Copied and modified methods from composer
     saveContent() {

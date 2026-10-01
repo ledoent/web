@@ -4,3 +4,4 @@
 - Artem Kostyuk \<<a.kostyuk@mobilunity.com>\>
 - Stéphane Mangin \<<stephane.mangin@camptocamp.com>\>
 - Helly kapatel \<<helly.kapatel@initos.com>\>
+- Don Kendall \<<dkendall@ledoweb.com>\>

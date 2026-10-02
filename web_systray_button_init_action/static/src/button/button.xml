@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<templates>
+    <t t-name="web_systray_button_init_action.Button">
+        <div t-if="this.showHomeButton" class="init_action_div">
+            <button
+                name="init_action"
+                class="btn btn-link"
+                title="Init Action"
+                href="#"
+                t-on-click="this.onClickInitAction"
+            >
+                <i
+                    class="oi oi-lg"
+                    data-icon="home"
+                    role="img"
+                    aria-label="Init Action"
+                />
+            </button>
+        </div>
+    </t>
+</templates>

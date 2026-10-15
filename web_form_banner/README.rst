@@ -1,7 +1,3 @@
-.. image:: https://odoo-community.org/readme-banner-image
-   :target: https://odoo-community.org/get-involved?utm_source=readme
-   :alt: Odoo Community Association
-
 ===============
 Web Form Banner
 ===============
@@ -17,7 +13,7 @@ Web Form Banner
 .. |badge1| image:: https://img.shields.io/badge/maturity-Beta-yellow.png
     :target: https://odoo-community.org/page/development-status
     :alt: Beta
-.. |badge2| image:: https://img.shields.io/badge/license-AGPL--3-blue.png
+.. |badge2| image:: https://img.shields.io/badge/licence-AGPL--3-blue.png
     :target: http://www.gnu.org/licenses/agpl-3.0-standalone.html
     :alt: License: AGPL-3
 .. |badge3| image:: https://img.shields.io/badge/github-OCA%2Fweb-lightgray.png?logo=github
@@ -220,6 +216,78 @@ trigger fields)**
    else:
      result = {"visible": False}
 
+Client-side mode (no server round-trip)
+---------------------------------------
+
+For rules whose visibility condition fits Odoo's client-side expression
+grammar (``py.js``), tick **Client-side** on the rule and write your
+condition in **Client Condition** instead of *Message Value Code*. The
+banner is then rendered as a self-contained ``<div invisible="..."/>``
+in the form arch; Odoo's view compiler evaluates visibility against the
+in-memory record on every reactive change — zero RPC, zero JavaScript on
+your side.
+
+What works in ``client_condition``:
+
+- Comparisons, boolean ops, ``in`` / ``not in``
+- Attribute access: ``partner_id.email``, ``company_id.country_id.code``
+- Built-ins: ``len()``, ``bool()``, ``min()``, ``max()``, ``set()``
+- Ternary ``x if cond else y``
+
+What does NOT work — keep using server-side mode for these:
+
+- Arbitrary method calls (``.filtered()``, ``.mapped()``, ``.search()``)
+- Slicing, lambdas, comprehensions
+- Anything touching records not loaded on the current form
+
+In the message you can interpolate field values either with inline
+``<field name="..."/>`` tags or with the shorter ``${field_name}``
+shortcut (the module rewrites the latter to a reactive ``<field/>`` at
+view-load time). Only flat field names are supported in ``${...}`` —
+Odoo form arch doesn't accept dotted paths like
+``<field name="partner_id.email"/>``. For related-record values, declare
+a stored related field on the model
+(``fields.Char(related="partner_id.email", store=True)``) and reference
+the flat name.
+
+You don't need to add ``<field name="X"/>`` placeholders to the form
+view for every name your condition references. The module parses the
+condition at view-load and auto-injects
+``<field name="X" invisible="True"/>`` siblings for anything that's
+missing — ``customer_rank > 0 and not email`` on a partner form works
+even when ``customer_rank`` isn't already on the view.
+
+**Example — contact missing email (works on the base partner form):**
+
+- Model: ``res.partner``
+- Client-side: ✓
+- Client Condition: ``not email and name``
+- HTML: ✓
+- Message:
+  ``Contact <strong>${name}</strong> has no email on file. Workflows requiring email delivery will fail.``
+
+Toggle email on/off in the form and the banner appears/disappears
+instantly — no Network-tab activity, no ``compute_message`` RPC.
+
+**Example — high-value draft order (auto-loads ``state`` if missing):**
+
+- Model: ``sale.order``
+- Client-side: ✓
+- Client Condition: ``state == 'draft' and amount_total > 10000``
+- Message:
+  ``Large draft order: ${amount_total}. Manager approval recommended.``
+
+**Limitations of client-side mode**
+
+- Severity (info/warning/danger) is baked into the alert's CSS class at
+  view-load time. You can't change severity per-record from
+  ``client_condition`` the way ``message_value_code`` can return a
+  dynamic ``"severity"`` key. Use server-side mode if you need
+  per-record severity.
+- The condition has to fit py.js — no method calls outside the listed
+  builtins, no slicing, no lambdas, no comprehensions.
+- ``${X.Y}`` in messages is rejected; only flat names work.
+
 If we set up the rules for a partner record as shown below:
 
 |image1|
@@ -263,6 +331,34 @@ Limitations of draft eval context variable
   boolean, integer, float, monetary, date, datetime, many2one, and
   many2many. **one2many/reference/other types are omitted.**
 
+Client-side mode follow-ups
+---------------------------
+
+- **Dynamic severity per record.** Today the severity (info/warning/
+  danger) is baked into the alert's CSS class at view-load time so
+  admins can't return
+  ``{"severity": "danger" if amount > 100000 else "warning"}`` the way
+  ``message_value_code`` can in server-side mode. One option: an OWL
+  widget that reads a hidden ``severity_expr`` from the arch and toggles
+  the alert class reactively.
+- **Dotted-name interpolation.** ``${partner_id.email}`` is currently
+  rejected because ``<field name="partner_id.email"/>`` isn't valid form
+  arch. A small OWL inline-renderer that reads
+  ``record.data.partner_id`` reactively and substitutes the related
+  value would fix this without requiring a stored related field on the
+  model.
+- **Rule builder UI.** A small wizard that lets admins compose
+  ``client_condition`` from a "field — operator — value" picker and
+  compiles to a py.js-valid string. Avoids the "you have to know the
+  grammar" hurdle for non-developer admins.
+- **Live syntax validator.** Server-side ``ast.parse`` catches typos but
+  not semantic mismatches (e.g. referencing a field not in the view). An
+  OWL editor with ``evaluateBooleanExpr`` dry-run would surface those
+  immediately in the rule form.
+- **Auto-detection of py.js compatibility.** If ``message_value_code``
+  is a single boolean expression with no method calls, suggest promoting
+  it to client-side mode on save.
+
 Bug Tracker
 ===========
 
@@ -280,6 +376,7 @@ Authors
 -------
 
 * Quartile
+* Ledoweb
 
 Contributors
 ------------
@@ -288,6 +385,10 @@ Contributors
 
   - Yoshi Tashiro
   - Aung Ko Ko Lin
+
+- `Ledoweb <https://ledoweb.com>`__:
+
+  - Dan Kendall <dkendall@ledoweb.com>
 
 Maintainers
 -----------
@@ -301,6 +402,14 @@ This module is maintained by the OCA.
 OCA, or the Odoo Community Association, is a nonprofit organization whose
 mission is to support the collaborative development of Odoo features and
 promote its widespread use.
+
+.. |maintainer-dnplkndll| image:: https://github.com/dnplkndll.png?size=40px
+    :target: https://github.com/dnplkndll
+    :alt: dnplkndll
+
+Current `maintainer <https://odoo-community.org/page/maintainer-role>`__:
+
+|maintainer-dnplkndll| 
 
 This module is part of the `OCA/web <https://github.com/OCA/web/tree/18.0/web_form_banner>`_ project on GitHub.
 

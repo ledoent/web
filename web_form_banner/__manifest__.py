@@ -1,10 +1,12 @@
 # Copyright 2025 Quartile (https://www.quartile.co)
+# Copyright 2026 Ledoweb (Dan Kendall)
 # License AGPL-3.0 or later (https://www.gnu.org/licenses/agpl).
 {
     "name": "Web Form Banner",
-    "version": "18.0.1.1.0",
+    "version": "18.0.1.2.0",
     "category": "Web",
-    "author": "Quartile, Odoo Community Association (OCA)",
+    "author": "Quartile, Ledoweb, Odoo Community Association (OCA)",
+    "maintainers": ["dnplkndll"],
     "website": "https://github.com/OCA/web",
     "license": "AGPL-3",
     "depends": ["web"],
